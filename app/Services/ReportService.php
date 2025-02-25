@@ -2,17 +2,28 @@
 
 namespace App\Services;
 
+use App\Collections\Accounting\DocumentCollection;
+use App\Contracts\BalanceFormattable;
 use App\DTO\AccountBalanceDTO;
 use App\DTO\AccountCategoryDTO;
 use App\DTO\AccountDTO;
 use App\DTO\AccountTransactionDTO;
 use App\DTO\AccountTypeDTO;
+use App\DTO\AgingBucketDTO;
 use App\DTO\CashFlowOverviewDTO;
+use App\DTO\EntityBalanceDTO;
+use App\DTO\EntityReportDTO;
+use App\DTO\PaymentMetricsDTO;
 use App\DTO\ReportDTO;
 use App\Enums\Accounting\AccountCategory;
 use App\Enums\Accounting\AccountType;
+use App\Enums\Accounting\BillStatus;
+use App\Enums\Accounting\DocumentEntityType;
+use App\Enums\Accounting\InvoiceStatus;
 use App\Enums\Accounting\TransactionType;
 use App\Models\Accounting\Account;
+use App\Models\Accounting\Bill;
+use App\Models\Accounting\Invoice;
 use App\Models\Accounting\Transaction;
 use App\Support\Column;
 use App\Utilities\Currency\CurrencyAccessor;
@@ -20,6 +31,7 @@ use App\Utilities\Currency\CurrencyConverter;
 use App\ValueObjects\Money;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Number;
 
 class ReportService
 {
@@ -27,21 +39,26 @@ class ReportService
         protected AccountService $accountService,
     ) {}
 
-    public function formatBalances(array $balances): AccountBalanceDTO
+    /**
+     * @param  class-string<BalanceFormattable>|null  $dtoClass
+     */
+    public function formatBalances(array $balances, ?string $dtoClass = null, bool $formatZeros = true): BalanceFormattable | array
     {
-        $defaultCurrency = CurrencyAccessor::getDefaultCurrency();
+        $dtoClass ??= AccountBalanceDTO::class;
 
-        foreach ($balances as $key => $balance) {
-            $balances[$key] = money($balance, $defaultCurrency)->format();
+        $formattedBalances = array_map(static function ($balance) use ($formatZeros) {
+            if (! $formatZeros && $balance === 0) {
+                return '';
+            }
+
+            return CurrencyConverter::formatCentsToMoney($balance);
+        }, $balances);
+
+        if (! $dtoClass) {
+            return $formattedBalances;
         }
 
-        return new AccountBalanceDTO(
-            startingBalance: $balances['starting_balance'] ?? null,
-            debitBalance: $balances['debit_balance'] ?? null,
-            creditBalance: $balances['credit_balance'] ?? null,
-            netMovement: $balances['net_movement'] ?? null,
-            endingBalance: $balances['ending_balance'] ?? null,
-        );
+        return $dtoClass::fromArray($formattedBalances);
     }
 
     public function buildAccountBalanceReport(string $startDate, string $endDate, array $columns = []): ReportDTO
@@ -263,9 +280,9 @@ class ReportService
             return [
                 'type' => 'transaction',
                 'action' => match ($transaction->type) {
-                    TransactionType::Journal => 'updateJournalTransaction',
-                    TransactionType::Transfer => 'updateTransfer',
-                    default => 'updateTransaction',
+                    TransactionType::Journal => 'editJournalTransaction',
+                    TransactionType::Transfer => 'editTransfer',
+                    default => 'editTransaction',
                 },
                 'id' => $transaction->id,
             ];
@@ -361,10 +378,10 @@ class ReportService
 
         $formattedReportTotalBalances = $this->formatBalances($reportTotalBalances);
 
-        return new ReportDTO($accountCategories, $formattedReportTotalBalances, $columns, $trialBalanceType);
+        return new ReportDTO(categories: $accountCategories, overallTotal: $formattedReportTotalBalances, fields: $columns, reportType: $trialBalanceType);
     }
 
-    public function getRetainedEarningsBalances(string $startDate, string $endDate): AccountBalanceDTO
+    public function getRetainedEarningsBalances(string $startDate, string $endDate): BalanceFormattable | array
     {
         $retainedEarningsAmount = $this->calculateRetainedEarnings($startDate, $endDate)->getAmount();
 
@@ -507,7 +524,7 @@ class ReportService
         );
     }
 
-    private function calculateTotalCashFlows(array $sections, string $startDate): AccountBalanceDTO
+    private function calculateTotalCashFlows(array $sections, string $startDate): BalanceFormattable | array
     {
         $totalInflow = 0;
         $totalOutflow = 0;
@@ -817,6 +834,258 @@ class ReportService
             fields: $columns,
             startDate: $startDateCarbon,
             endDate: $asOfDateCarbon,
+        );
+    }
+
+    public function buildAgingReport(
+        string $asOfDate,
+        DocumentEntityType $entityType,
+        array $columns = [],
+        int $daysPerPeriod = 30,
+        int $numberOfPeriods = 4
+    ): ReportDTO {
+        $asOfDateCarbon = Carbon::parse($asOfDate);
+
+        $documents = $entityType === DocumentEntityType::Client
+            ? $this->accountService->getUnpaidClientInvoices($asOfDate)->with(['client:id,name'])->get()->groupBy('client_id')
+            : $this->accountService->getUnpaidVendorBills($asOfDate)->with(['vendor:id,name'])->get()->groupBy('vendor_id');
+
+        $categories = [];
+        $totalAging = [
+            'current' => 0,
+        ];
+        for ($i = 1; $i <= $numberOfPeriods; $i++) {
+            $totalAging["period_{$i}"] = 0;
+        }
+        $totalAging['over_periods'] = 0;
+        $totalAging['total'] = 0;
+
+        /** @var DocumentCollection<int,Invoice|Bill> $entityDocuments */
+        foreach ($documents as $entityId => $entityDocuments) {
+            $aging = [
+                'current' => $entityDocuments
+                    ->filter(static fn ($doc) => ($doc->days_overdue ?? 0) <= 0)
+                    ->sumMoneyInDefaultCurrency('amount_due'),
+            ];
+
+            for ($i = 1; $i <= $numberOfPeriods; $i++) {
+                $min = ($i - 1) * $daysPerPeriod;
+                $max = $i * $daysPerPeriod;
+                $aging["period_{$i}"] = $entityDocuments
+                    ->filter(static function ($doc) use ($min, $max) {
+                        $days = $doc->days_overdue ?? 0;
+
+                        return $days > $min && $days <= $max;
+                    })
+                    ->sumMoneyInDefaultCurrency('amount_due');
+            }
+
+            $aging['over_periods'] = $entityDocuments
+                ->filter(static fn ($doc) => ($doc->days_overdue ?? 0) > ($numberOfPeriods * $daysPerPeriod))
+                ->sumMoneyInDefaultCurrency('amount_due');
+
+            $aging['total'] = array_sum($aging);
+
+            foreach ($aging as $bucket => $amount) {
+                $totalAging[$bucket] += $amount;
+            }
+
+            $entity = $entityDocuments->first()->{$entityType->value};
+
+            $categories[] = new EntityReportDTO(
+                name: $entity->name,
+                id: $entityId,
+                aging: $this->formatBalances($aging, AgingBucketDTO::class, false),
+            );
+        }
+
+        $totalAging['total'] = array_sum($totalAging);
+
+        return new ReportDTO(
+            categories: ['Entities' => $categories],
+            agingSummary: $this->formatBalances($totalAging, AgingBucketDTO::class),
+            fields: $columns,
+            endDate: $asOfDateCarbon,
+        );
+    }
+
+    public function buildEntityBalanceSummaryReport(string $startDate, string $endDate, DocumentEntityType $entityType, array $columns = []): ReportDTO
+    {
+        $documents = match ($entityType) {
+            DocumentEntityType::Client => Invoice::query()
+                ->whereBetween('date', [$startDate, $endDate])
+                ->whereNotIn('status', [
+                    InvoiceStatus::Draft,
+                    InvoiceStatus::Void,
+                ])
+                ->whereNotNull('approved_at')
+                ->with(['client:id,name'])
+                ->get()
+                ->groupBy('client_id'),
+            DocumentEntityType::Vendor => Bill::query()
+                ->whereBetween('date', [$startDate, $endDate])
+                ->whereNot('status', BillStatus::Void)
+                ->with(['vendor:id,name'])
+                ->get()
+                ->groupBy('vendor_id'),
+        };
+
+        $entities = [];
+        $totalBalance = 0;
+        $totalPaidBalance = 0;
+        $totalUnpaidBalance = 0;
+
+        /** @var DocumentCollection<int,Invoice|Bill> $entityDocuments */
+        foreach ($documents as $entityDocuments) {
+            $entityTotalBalance = $entityDocuments->sumMoneyInDefaultCurrency('total');
+
+            $entityPaidBalance = $entityDocuments->sumMoneyInDefaultCurrency('amount_paid');
+
+            $entityUnpaidBalance = match ($entityType) {
+                DocumentEntityType::Client => $entityDocuments->whereNot('status', InvoiceStatus::Overpaid)
+                    ->sumMoneyInDefaultCurrency('amount_due'),
+                DocumentEntityType::Vendor => $entityDocuments->whereIn('status', [BillStatus::Open, BillStatus::Partial, BillStatus::Overdue])
+                    ->sumMoneyInDefaultCurrency('amount_due'),
+            };
+
+            $totalBalance += $entityTotalBalance;
+            $totalPaidBalance += $entityPaidBalance;
+            $totalUnpaidBalance += $entityUnpaidBalance;
+
+            $formattedBalances = $this->formatBalances([
+                'total_balance' => $entityTotalBalance,
+                'paid_balance' => $entityPaidBalance,
+                'unpaid_balance' => $entityUnpaidBalance,
+            ], EntityBalanceDTO::class);
+
+            $entity = $entityDocuments->first()->{$entityType->value};
+
+            $entities[] = new EntityReportDTO(
+                name: $entity->name,
+                id: $entity->id,
+                balance: $formattedBalances,
+            );
+        }
+
+        $entityBalanceTotal = $this->formatBalances([
+            'total_balance' => $totalBalance,
+            'paid_balance' => $totalPaidBalance,
+            'unpaid_balance' => $totalUnpaidBalance,
+        ], EntityBalanceDTO::class);
+
+        return new ReportDTO(
+            categories: ['Entities' => $entities],
+            entityBalanceTotal: $entityBalanceTotal,
+            fields: $columns,
+            startDate: Carbon::parse($startDate),
+            endDate: Carbon::parse($endDate),
+        );
+    }
+
+    public function buildEntityPaymentPerformanceReport(
+        string $startDate,
+        string $endDate,
+        DocumentEntityType $entityType,
+        array $columns = []
+    ): ReportDTO {
+        $documents = match ($entityType) {
+            DocumentEntityType::Client => Invoice::query()
+                ->whereBetween('date', [$startDate, $endDate])
+                ->whereNotIn('status', [InvoiceStatus::Draft, InvoiceStatus::Void])
+                ->whereNotNull('approved_at')
+                ->whereNotNull('paid_at')
+                ->with(['client:id,name'])
+                ->get()
+                ->groupBy('client_id'),
+            DocumentEntityType::Vendor => Bill::query()
+                ->whereBetween('date', [$startDate, $endDate])
+                ->whereNotIn('status', [BillStatus::Void])
+                ->whereNotNull('paid_at')
+                ->with(['vendor:id,name'])
+                ->get()
+                ->groupBy('vendor_id'),
+        };
+
+        $categories = [];
+        $totalDocs = 0;
+        $totalOnTime = 0;
+        $totalLate = 0;
+        $allPaymentDays = [];
+        $allLateDays = [];
+
+        /** @var DocumentCollection<int,Invoice|Bill> $entityDocuments */
+        foreach ($documents as $entityId => $entityDocuments) {
+            $entity = $entityDocuments->first()->{$entityType->value};
+
+            $onTimeDocs = $entityDocuments->filter(fn (Invoice | Bill $doc) => $doc->paid_at->lte($doc->due_date));
+            $onTimeCount = $onTimeDocs->count();
+
+            $lateDocs = $entityDocuments->filter(fn (Invoice | Bill $doc) => $doc->paid_at->gt($doc->due_date));
+            $lateCount = $lateDocs->count();
+
+            $avgDaysToPay = $entityDocuments->avg(
+                fn (Invoice | Bill $doc) => $doc instanceof Invoice
+                    ? $doc->approved_at->diffInDays($doc->paid_at)
+                    : $doc->date->diffInDays($doc->paid_at)
+            ) ?? 0;
+
+            $avgDaysLate = $lateDocs->avg(fn (Invoice | Bill $doc) => $doc->due_date->diffInDays($doc->paid_at)) ?? 0;
+
+            $onTimeRate = $entityDocuments->isNotEmpty()
+                ? ($onTimeCount / $entityDocuments->count() * 100)
+                : 0;
+
+            $totalDocs += $entityDocuments->count();
+            $totalOnTime += $onTimeCount;
+            $totalLate += $lateCount;
+
+            $entityDocuments->each(function (Invoice | Bill $doc) use (&$allPaymentDays, &$allLateDays) {
+                $allPaymentDays[] = $doc instanceof Invoice
+                    ? $doc->approved_at->diffInDays($doc->paid_at)
+                    : $doc->date->diffInDays($doc->paid_at);
+
+                if ($doc->paid_at->gt($doc->due_date)) {
+                    $allLateDays[] = $doc->due_date->diffInDays($doc->paid_at);
+                }
+            });
+
+            $categories[] = new EntityReportDTO(
+                name: $entity->name,
+                id: $entityId,
+                paymentMetrics: new PaymentMetricsDTO(
+                    totalDocuments: $entityDocuments->count(),
+                    onTimeCount: $onTimeCount ?: null,
+                    lateCount: $lateCount ?: null,
+                    avgDaysToPay: $avgDaysToPay ? round($avgDaysToPay) : null,
+                    avgDaysLate: $avgDaysLate ? round($avgDaysLate) : null,
+                    onTimePaymentRate: Number::percentage($onTimeRate, maxPrecision: 2),
+                ),
+            );
+        }
+
+        $categories = collect($categories)
+            ->sortByDesc(static fn (EntityReportDTO $category) => $category->paymentMetrics->onTimePaymentRate, SORT_NATURAL)
+            ->values()
+            ->all();
+
+        $overallMetrics = new PaymentMetricsDTO(
+            totalDocuments: $totalDocs,
+            onTimeCount: $totalOnTime,
+            lateCount: $totalLate,
+            avgDaysToPay: round(collect($allPaymentDays)->avg() ?? 0),
+            avgDaysLate: round(collect($allLateDays)->avg() ?? 0),
+            onTimePaymentRate: Number::percentage(
+                $totalDocs > 0 ? ($totalOnTime / $totalDocs * 100) : 0,
+                maxPrecision: 2
+            ),
+        );
+
+        return new ReportDTO(
+            categories: ['Entities' => $categories],
+            overallPaymentMetrics: $overallMetrics,
+            fields: $columns,
+            startDate: Carbon::parse($startDate),
+            endDate: Carbon::parse($endDate),
         );
     }
 }

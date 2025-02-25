@@ -4,6 +4,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $report->getTitle() }}</title>
+    @vite('resources/js/app.js')
     <style>
         .font-bold {
             font-weight: bold;
@@ -50,7 +51,7 @@
 
         .table-class {
             border-collapse: collapse;
-            table-layout: fixed;
+            table-layout: auto;
             width: 100%;
         }
 

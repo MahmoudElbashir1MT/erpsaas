@@ -370,4 +370,40 @@ class AccountService
 
         return $earliestDate ?? today()->toDateTimeString();
     }
+
+    public function getUnpaidClientInvoices(?string $asOfDate = null): Builder
+    {
+        $asOfDate = $asOfDate ?? now()->toDateString();
+
+        return Invoice::query()
+            ->select([
+                'invoices.id',
+                'invoices.client_id',
+                'invoices.due_date',
+                'invoices.amount_due',
+                'invoices.currency_code',
+                DB::raw('DATEDIFF(?, invoices.due_date) as days_overdue'),
+            ])
+            ->addBinding([$asOfDate], 'select')
+            ->unpaid()
+            ->where('amount_due', '>', 0);
+    }
+
+    public function getUnpaidVendorBills(?string $asOfDate = null): Builder
+    {
+        $asOfDate = $asOfDate ?? now()->toDateString();
+
+        return Bill::query()
+            ->select([
+                'bills.id',
+                'bills.vendor_id',
+                'bills.due_date',
+                'bills.amount_due',
+                'bills.currency_code',
+                DB::raw('DATEDIFF(?, bills.due_date) as days_overdue'),
+            ])
+            ->addBinding([$asOfDate], 'select')
+            ->unpaid()
+            ->where('amount_due', '>', 0);
+    }
 }

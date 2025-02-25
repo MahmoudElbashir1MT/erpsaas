@@ -37,20 +37,9 @@ class AccountTransactions extends BaseReportPage
         $this->exportService = $exportService;
     }
 
-    public function getMaxContentWidth(): MaxWidth | string | null
+    public function getMaxContentWidth(): MaxWidth|string|null
     {
         return 'max-w-8xl';
-    }
-
-    protected function initializeDefaultFilters(): void
-    {
-        if (empty($this->getFilterState('selectedAccount'))) {
-            $this->setFilterState('selectedAccount', 'all');
-        }
-
-        if (empty($this->getFilterState('selectedEntity'))) {
-            $this->setFilterState('selectedEntity', 'all');
-        }
     }
 
     /**
@@ -102,7 +91,7 @@ class AccountTransactions extends BaseReportPage
                     ->selectablePlaceholder(false),
                 Actions::make([
                     Actions\Action::make('applyFilters')
-                        ->label('Update Report')
+                        ->label('Update report')
                         ->action('applyFilters')
                         ->keyBindings(['mod+s'])
                         ->button(),
@@ -114,8 +103,8 @@ class AccountTransactions extends BaseReportPage
     {
         $accounts = Account::query()
             ->get()
-            ->groupBy(fn (Account $account) => $account->category->getPluralLabel())
-            ->map(fn (Collection $accounts) => $accounts->pluck('name', 'id'))
+            ->groupBy(fn(Account $account) => $account->category->getPluralLabel())
+            ->map(fn(Collection $accounts) => $accounts->pluck('name', 'id'))
             ->toArray();
 
         $allAccountsOption = [
@@ -135,7 +124,7 @@ class AccountTransactions extends BaseReportPage
         $vendors = Vendor::query()
             ->orderBy('name')
             ->pluck('name', 'id')
-            ->mapWithKeys(fn ($name, $id) => [-$id => $name])
+            ->mapWithKeys(fn($name, $id) => [-$id => $name])
             ->toArray();
 
         $allEntitiesOption = [
@@ -143,9 +132,59 @@ class AccountTransactions extends BaseReportPage
         ];
 
         return $allEntitiesOption + [
-            'Clients' => $clients,
-            'Vendors' => $vendors,
+                'Clients' => $clients,
+                'Vendors' => $vendors,
+            ];
+    }
+
+    public function exportCSV(): StreamedResponse
+    {
+        return $this->exportService->exportToCsv($this->company, $this->report, $this->getFilterState('startDate'), $this->getFilterState('endDate'));
+    }
+
+    public function exportPDF(): StreamedResponse
+    {
+        return $this->exportService->exportToPdf($this->company, $this->report, $this->getFilterState('startDate'), $this->getFilterState('endDate'));
+    }
+
+    public function getEmptyStateHeading(): string|Htmlable
+    {
+        return 'No Transactions Found';
+    }
+
+    public function getEmptyStateDescription(): string|Htmlable|null
+    {
+        return 'Adjust the account or date range, or start by creating a transaction.';
+    }
+
+    public function getEmptyStateIcon(): string
+    {
+        return 'heroicon-o-x-mark';
+    }
+
+    public function getEmptyStateActions(): array
+    {
+        return [
+            Action::make('createTransaction')
+                ->label('Create transaction')
+                ->url(Transactions::getUrl()),
         ];
+    }
+
+    public function tableHasEmptyState(): bool
+    {
+        return empty($this->report?->getCategories());
+    }
+
+    protected function initializeDefaultFilters(): void
+    {
+        if (empty($this->getFilterState('selectedAccount'))) {
+            $this->setFilterState('selectedAccount', 'all');
+        }
+
+        if (empty($this->getFilterState('selectedEntity'))) {
+            $this->setFilterState('selectedEntity', 'all');
+        }
     }
 
     protected function buildReport(array $columns): ReportDTO
@@ -162,44 +201,5 @@ class AccountTransactions extends BaseReportPage
     protected function getTransformer(ReportDTO $reportDTO): ExportableReport
     {
         return new AccountTransactionReportTransformer($reportDTO);
-    }
-
-    public function exportCSV(): StreamedResponse
-    {
-        return $this->exportService->exportToCsv($this->company, $this->report, $this->getFilterState('startDate'), $this->getFilterState('endDate'));
-    }
-
-    public function exportPDF(): StreamedResponse
-    {
-        return $this->exportService->exportToPdf($this->company, $this->report, $this->getFilterState('startDate'), $this->getFilterState('endDate'));
-    }
-
-    public function getEmptyStateHeading(): string | Htmlable
-    {
-        return 'No Transactions Found';
-    }
-
-    public function getEmptyStateDescription(): string | Htmlable | null
-    {
-        return 'Adjust the account or date range, or start by creating a transaction.';
-    }
-
-    public function getEmptyStateIcon(): string
-    {
-        return 'heroicon-o-x-mark';
-    }
-
-    public function getEmptyStateActions(): array
-    {
-        return [
-            Action::make('createTransaction')
-                ->label('Create Transaction')
-                ->url(Transactions::getUrl()),
-        ];
-    }
-
-    public function tableHasEmptyState(): bool
-    {
-        return empty($this->report?->getCategories());
     }
 }
