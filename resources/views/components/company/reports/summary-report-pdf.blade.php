@@ -1,19 +1,15 @@
 @extends('components.company.reports.layout')
 
 @section('content')
-    <div class="header text-center">
-        <div class="title ">{{ $report->getTitle() }}</div>
+    <div class="header">
+        <div class="title">{{ $report->getTitle() }}</div>
         <div class="company-name">{{ $company->name }}</div>
-        @if($company->logo)
-            <div class="company-name">{{ $company->logo }}</div>
-        @endif
         @if($startDate && $endDate)
             <div class="date-range">Date Range: {{ $startDate }} to {{ $endDate }}</div>
         @else
             <div class="date-range">As of {{ $endDate }}</div>
         @endif
     </div>
-    <hr>
     <table class="table-class">
         <colgroup>
             <col span="1" style="width: 65%;">

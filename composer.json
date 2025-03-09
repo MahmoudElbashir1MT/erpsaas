@@ -27,8 +27,7 @@
         "laravel/tinker": "^2.9",
         "squirephp/model": "^3.4",
         "squirephp/repository": "^3.4",
-        "symfony/intl": "^6.3",
-        "ext-pdo": "*"
+        "symfony/intl": "^6.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

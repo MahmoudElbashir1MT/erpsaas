@@ -37,9 +37,20 @@ class AccountTransactions extends BaseReportPage
         $this->exportService = $exportService;
     }
 
-    public function getMaxContentWidth(): MaxWidth|string|null
+    public function getMaxContentWidth(): MaxWidth | string | null
     {
         return 'max-w-8xl';
+    }
+
+    protected function initializeDefaultFilters(): void
+    {
+        if (empty($this->getFilterState('selectedAccount'))) {
+            $this->setFilterState('selectedAccount', 'all');
+        }
+
+        if (empty($this->getFilterState('selectedEntity'))) {
+            $this->setFilterState('selectedEntity', 'all');
+        }
     }
 
     /**
@@ -103,8 +114,8 @@ class AccountTransactions extends BaseReportPage
     {
         $accounts = Account::query()
             ->get()
-            ->groupBy(fn(Account $account) => $account->category->getPluralLabel())
-            ->map(fn(Collection $accounts) => $accounts->pluck('name', 'id'))
+            ->groupBy(fn (Account $account) => $account->category->getPluralLabel())
+            ->map(fn (Collection $accounts) => $accounts->pluck('name', 'id'))
             ->toArray();
 
         $allAccountsOption = [
@@ -124,7 +135,7 @@ class AccountTransactions extends BaseReportPage
         $vendors = Vendor::query()
             ->orderBy('name')
             ->pluck('name', 'id')
-            ->mapWithKeys(fn($name, $id) => [-$id => $name])
+            ->mapWithKeys(fn ($name, $id) => [-$id => $name])
             ->toArray();
 
         $allEntitiesOption = [
@@ -132,9 +143,25 @@ class AccountTransactions extends BaseReportPage
         ];
 
         return $allEntitiesOption + [
-                'Clients' => $clients,
-                'Vendors' => $vendors,
-            ];
+            'Clients' => $clients,
+            'Vendors' => $vendors,
+        ];
+    }
+
+    protected function buildReport(array $columns): ReportDTO
+    {
+        return $this->reportService->buildAccountTransactionsReport(
+            startDate: $this->getFormattedStartDate(),
+            endDate: $this->getFormattedEndDate(),
+            columns: $columns,
+            accountId: $this->getFilterState('selectedAccount'),
+            entityId: $this->getFilterState('selectedEntity'),
+        );
+    }
+
+    protected function getTransformer(ReportDTO $reportDTO): ExportableReport
+    {
+        return new AccountTransactionReportTransformer($reportDTO);
     }
 
     public function exportCSV(): StreamedResponse
@@ -147,12 +174,12 @@ class AccountTransactions extends BaseReportPage
         return $this->exportService->exportToPdf($this->company, $this->report, $this->getFilterState('startDate'), $this->getFilterState('endDate'));
     }
 
-    public function getEmptyStateHeading(): string|Htmlable
+    public function getEmptyStateHeading(): string | Htmlable
     {
         return 'No Transactions Found';
     }
 
-    public function getEmptyStateDescription(): string|Htmlable|null
+    public function getEmptyStateDescription(): string | Htmlable | null
     {
         return 'Adjust the account or date range, or start by creating a transaction.';
     }
@@ -174,32 +201,5 @@ class AccountTransactions extends BaseReportPage
     public function tableHasEmptyState(): bool
     {
         return empty($this->report?->getCategories());
-    }
-
-    protected function initializeDefaultFilters(): void
-    {
-        if (empty($this->getFilterState('selectedAccount'))) {
-            $this->setFilterState('selectedAccount', 'all');
-        }
-
-        if (empty($this->getFilterState('selectedEntity'))) {
-            $this->setFilterState('selectedEntity', 'all');
-        }
-    }
-
-    protected function buildReport(array $columns): ReportDTO
-    {
-        return $this->reportService->buildAccountTransactionsReport(
-            startDate: $this->getFormattedStartDate(),
-            endDate: $this->getFormattedEndDate(),
-            columns: $columns,
-            accountId: $this->getFilterState('selectedAccount'),
-            entityId: $this->getFilterState('selectedEntity'),
-        );
-    }
-
-    protected function getTransformer(ReportDTO $reportDTO): ExportableReport
-    {
-        return new AccountTransactionReportTransformer($reportDTO);
     }
 }

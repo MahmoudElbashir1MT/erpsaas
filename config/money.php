@@ -4,7 +4,7 @@ return [
 
     'defaults' => [
 
-        'currency' => env('MONEY_DEFAULTS_CURRENCY', 'SDG'),
+        'currency' => env('MONEY_DEFAULTS_CURRENCY', 'USD'),
 
         'convert' => env('MONEY_DEFAULTS_CONVERT', false),
 

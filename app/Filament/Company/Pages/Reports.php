@@ -35,7 +35,7 @@ class Reports extends Page
                 ->parentItem(static::getNavigationParentItem())
                 ->icon(static::getNavigationIcon())
                 ->activeIcon(static::getActiveNavigationIcon())
-                ->isActiveWhen(fn(): bool => request()->routeIs([
+                ->isActiveWhen(fn (): bool => request()->routeIs([
                     static::getRouteName(),
                     static::getRouteName() . '.*',
                 ]))
@@ -52,6 +52,7 @@ class Reports extends Page
             ->state([])
             ->schema([
                 Section::make('Financial Statements')
+                    ->aside()
                     ->description('Key financial statements that provide an overview of your company’s financial health and performance.')
                     ->extraAttributes(['class' => 'es-report-card'])
                     ->schema([
@@ -76,9 +77,6 @@ class Reports extends Page
                             ->icon('heroicon-o-document-currency-dollar')
                             ->iconColor(Color::Cyan)
                             ->url(CashFlowStatement::getUrl()),
-<<<<<<< HEAD
-                    ])->columns(3),
-=======
                     ]),
                 Section::make('Client Reports')
                     ->aside()
@@ -134,8 +132,8 @@ class Reports extends Page
                             ->iconColor(Color::Violet)
                             ->url(VendorPaymentPerformance::getUrl()),
                     ]),
->>>>>>> 529177c7aba99b4b5e990d7b92ea5da206465169
                 Section::make('Detailed Reports')
+                    ->aside()
                     ->description('Detailed reports that provide a comprehensive view of your company’s financial transactions and account balances.')
                     ->extraAttributes(['class' => 'es-report-card'])
                     ->schema([
@@ -160,7 +158,7 @@ class Reports extends Page
                             ->icon('heroicon-o-list-bullet')
                             ->iconColor(Color::Yellow)
                             ->url(AccountTransactions::getUrl()),
-                    ])->columns(3),
+                    ]),
             ]);
     }
 }
