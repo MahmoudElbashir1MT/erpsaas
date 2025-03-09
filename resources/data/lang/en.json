@@ -193,9 +193,18 @@
     "Scheduling Form": "Scheduling Form",
     "Approve": "Approve",
     "Frequency": "Frequency",
+<<<<<<< HEAD
+    "Schedule Bounds": "Schedule Bounds",
+    "Time Zone": "Time Zone",
+    "Dates & Time": "Dates & Time",
+    "ACCOUNT CODE": "ACCOUNT CODE",
+    "جنرال لواء": "جنرال لواء",
+    "المحتوى": "المحتوى",
+    "القالب": "القالب"
+}
+=======
     "Dates & Time": "Dates & Time",
     "account": "account",
-    "currency": "currency",
-    "Estimate": "Estimate",
-    "Column Labels": "Column Labels"
+    "currency": "currency"
 }
+>>>>>>> 529177c7aba99b4b5e990d7b92ea5da206465169
